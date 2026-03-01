@@ -6,7 +6,9 @@
   "permissions": ["storage"],
   "host_permissions": ["https://steamcommunity.com/*"],
   "icons": {
-    "128": "images/icon-128.png"
+    "16": "images/icon-16.png",
+    "128": "images/icon-128.png",
+    "512": "images/icon-512.png"
   },
   "background": {
     "service_worker": "background.js"
