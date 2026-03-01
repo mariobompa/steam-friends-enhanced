@@ -1,0 +1,270 @@
+/* Hide default Steam status headers */
+.state_block {
+  display: none !important;
+}
+
+.sfm-row-host {
+  position: relative;
+}
+
+.sfm-inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 20;
+}
+
+.sfm-note-btn,
+.sfm-group-btn {
+  font-size: 12px;
+  line-height: 1;
+  border: 1px solid #4a9eb5;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, #5db3cc 0%, #4a9eb5 100%);
+  color: #fff;
+  padding: 4px 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sfm-note-btn:hover,
+.sfm-group-btn:hover {
+  background: linear-gradient(to bottom, #6fc1db 0%, #5db3cc 100%);
+  border-color: #6fc1db;
+}
+
+.sfm-note-btn svg,
+.sfm-group-btn svg {
+  display: block;
+}
+
+.sfm-group-dropdown {
+  display: none;
+  position: fixed;
+  min-width: 140px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #4a9eb5;
+  border-radius: 4px;
+  background: #2a475e;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 99999;
+}
+
+.sfm-group-btn.sfm-group-open + .sfm-group-dropdown {
+  display: block;
+}
+
+.sfm-group-option {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #c7d5e0;
+  cursor: pointer;
+  border-bottom: 1px solid #1a2838;
+}
+
+.sfm-group-option:last-child {
+  border-bottom: none;
+}
+
+.sfm-group-option:hover {
+  background: #3a5771;
+}
+
+.sfm-group-option.sfm-selected {
+  background: #4a9eb5;
+  color: #fff;
+  font-weight: 600;
+}
+
+.sfm-add-btn,
+.sfm-delete-btn {
+  font-size: 12px;
+  line-height: 1.2;
+  border: 1px solid #a6a6a6;
+  border-radius: 4px;
+  background: #e5e5e5;
+  color: #222;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+
+.sfm-group-select {
+  min-width: 88px;
+  max-width: 105px;
+  font-weight: 500;
+}
+
+.sfm-note-input {
+  display: none;
+  position: fixed;
+  width: 180px;
+  resize: vertical;
+  font-size: 12px;
+  border: 1px solid #4a9eb5;
+  border-radius: 4px;
+  background: #2a475e;
+  color: #c7d5e0;
+  padding: 6px;
+  z-index: 99999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.sfm-inline-controls.sfm-note-open .sfm-note-input {
+  display: block;
+}
+
+.sfm-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  margin: 6px 0 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #2f506b;
+  border-radius: 4px;
+  background: #17384e;
+  color: #b7d5ea;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.sfm-group-header:hover {
+  background: #1e4460;
+}
+
+.sfm-group-header.sfm-drag-over {
+  background: #2a5f7e;
+  border-color: #5c9fc9;
+}
+
+.sfm-group-delete {
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #d66;
+  opacity: 0.7;
+}
+
+.sfm-group-delete:hover {
+  opacity: 1;
+  color: #f88;
+}
+
+.sfm-row-host[draggable="true"] {
+  cursor: move;
+}
+
+.sfm-row-host.sfm-dragging {
+  opacity: 0.4;
+}
+
+#sfm-create-group-btn {
+  margin-left: 8px;
+}
+
+.sfm-folder-icon {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+  margin-top: -2px;
+}
+
+.sfm-create-group-floating-btn {
+  position: fixed;
+  top: 180px;
+  right: 20px;
+  z-index: 50;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #5c9fc9;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, #799905 5%, #536904 95%);
+  color: #d2e885;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.sfm-create-group-floating-btn:hover {
+  background: linear-gradient(to bottom, #8fb806 5%, #5f7705 95%);
+  color: #e4f7a5;
+}
+
+.sfm-create-group-inline-btn {
+  margin-left: 12px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #5c9fc9;
+  border-radius: 4px;
+  background: #17384e;
+  color: #b7d5ea;
+  cursor: pointer;
+}
+
+.sfm-create-group-inline-btn:hover {
+  background: #1e4460;
+  border-color: #6fadce;
+}
+
+.sfm-hover-tooltip {
+  position: fixed;
+  max-width: 360px;
+  pointer-events: none;
+  display: none;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid #4c6b81;
+  border-radius: 5px;
+  background: #1b2838;
+  color: #c7d5e0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+}
+
+/* Drop zone overlays for drag and drop */
+.sfm-drop-zone {
+  pointer-events: none;
+  background: rgba(42, 71, 94, 0.85);
+  border: 3px dashed rgba(93, 179, 204, 0.6);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  transition: all 0.2s ease;
+}
+
+.sfm-drop-zone-active {
+  background: rgba(42, 71, 94, 0.95);
+  border-color: rgba(93, 179, 204, 1);
+  border-width: 4px;
+}
+
+.sfm-drop-zone-icon {
+  font-size: 72px;
+  font-weight: bold;
+  color: rgba(93, 179, 204, 0.7);
+  pointer-events: none;
+  transition: all 0.2s ease;
+  text-shadow: 0 3px 6px rgba(0, 0, 0, 0.5);
+}
+
+.sfm-drop-zone-active .sfm-drop-zone-icon {
+  color: rgba(93, 179, 204, 1);
+  transform: scale(1.15);
+}
+
+.sfm-hover-tooltip.sfm-visible {
+  display: block;
+}
