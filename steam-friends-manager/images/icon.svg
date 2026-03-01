@@ -1,0 +1,23 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="128" height="128" fill="#1b2838"/>
+  
+  <!-- Gradient background -->
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5db3cc;stop-opacity:0.15" />
+      <stop offset="100%" style="stop-color:#4a9eb5;stop-opacity:0.25" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" fill="url(#grad)"/>
+  
+  <!-- Folder icon with plus sign -->
+  <g transform="translate(32, 28)">
+    <!-- Folder base -->
+    <path d="M2 6C2 3.79086 3.79086 2 6 2H20L24 8H58C60.2091 8 62 9.79086 62 12V54C62 56.2091 60.2091 58 58 58H6C3.79086 58 2 56.2091 2 54V6Z" 
+          stroke="#5db3cc" stroke-width="2" fill="none" stroke-linejoin="round"/>
+    <!-- Plus sign -->
+    <line x1="40" y1="24" x2="40" y2="44" stroke="#5db3cc" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="30" y1="34" x2="50" y2="34" stroke="#5db3cc" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+</svg>

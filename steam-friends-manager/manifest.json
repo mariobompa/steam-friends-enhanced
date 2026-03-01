@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Steam Friends Manager",
-  "version": "0.1",
+  "version": "1.0.0",
+  "description": "Add notes to friends, create custom groups, and organize with drag-and-drop on Steam Community.",
   "permissions": ["storage"],
   "host_permissions": ["https://steamcommunity.com/*"],
+  "icons": {
+    "128": "images/icon-128.png"
+  },
   "background": {
     "service_worker": "background.js"
   },
