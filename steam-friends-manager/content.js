@@ -5,9 +5,13 @@
   if (!globalThis.SFMUI) {
     return;
   }
+  if (!globalThis.SFMAuth) {
+    return;
+  }
 
-  const { getState, updateFriend, addGroup, deleteGroup } = globalThis.SFMStorage;
-  const { createFriendControls } = globalThis.SFMUI;
+  const { getState, updateFriend, addGroup, updateGroup, deleteGroup, reorderGroups, addTag, updateTag, deleteTag, saveState } = globalThis.SFMStorage;
+  const { createFriendControls, showManageTagsModal, showManageGroupsModal } = globalThis.SFMUI;
+  const { syncFriendshipDates, calculateFriendshipDuration, formatFriendshipDate, getAccessToken, removeFriend } = globalThis.SFMAuth;
 
   const steamIdRegex = /\/profiles\/(\d+)/;
   const STEAM_ID64_BASE = 76561197960265728n;
@@ -130,70 +134,229 @@
     return "";
   }
 
-  function ensureTooltip() {
-    let tooltip = document.getElementById("sfm-hover-tooltip");
-    if (!tooltip) {
-      tooltip = document.createElement("div");
-      tooltip.id = "sfm-hover-tooltip";
-      tooltip.className = "sfm-hover-tooltip";
-      document.body.appendChild(tooltip);
-    }
-    return tooltip;
+  // Store friend metadata for miniprofile injection (by steamId)
+  const friendMetadataCache = new Map();
+  let miniprofileEnhanceTimeout = null;
+  let currentlyHoveredFriendRow = null;  // Track which friend row is being hovered
+  let lastHoveredAccountId = null;
+
+
+  function updateFriendMetadataCache(row) {
+    const steamId = extractSteamIdFromRow(row);
+    if (!steamId) return;
+
+    const note = row.getAttribute("data-sfm-note") || "";
+    const tagsText = row.getAttribute("data-sfm-tags") || "";
+    const friendSince = row.getAttribute("data-sfm-friend-since") || "";
+
+    friendMetadataCache.set(steamId, {
+      note: note !== "No note" ? note : "",
+      tagsText,
+      friendSince
+    });
   }
 
-  function bindRowTooltip(row) {
-    if (row.getAttribute("data-sfm-tooltip-bound") === "true") {
+  function extractSteamIdFromMiniprofile(miniprofileElement) {
+    // Method 0: Use account id snapshot stored on miniprofile during debounce scheduling
+    const targetAccountId = miniprofileElement.getAttribute('data-sfm-target-account-id');
+    if (targetAccountId && targetAccountId.trim()) {
+      const steamId = accountIdToSteamId64(targetAccountId);
+      if (steamId) {
+        miniprofileElement.setAttribute('data-sfm-steam-id', steamId);
+        return steamId;
+      }
+    }
+
+    // Method 1: Use the currently hovered friend row (most reliable)
+    if (currentlyHoveredFriendRow) {
+      const accountId = currentlyHoveredFriendRow.getAttribute('data-miniprofile');
+      if (accountId && accountId.trim()) {
+        const steamId = accountIdToSteamId64(accountId);
+        if (steamId) {
+          miniprofileElement.setAttribute('data-sfm-steam-id', steamId);
+          return steamId;
+        }
+      }
+    }
+
+    // Method 2: Try to find the closest friend row that's being hovered (as fallback)
+    const friendRow = miniprofileElement.closest('[data-miniprofile]');
+    if (friendRow) {
+      const accountId = friendRow.getAttribute('data-miniprofile');
+      if (accountId && accountId.trim()) {
+        const steamId = accountIdToSteamId64(accountId);
+        if (steamId) {
+          miniprofileElement.setAttribute('data-sfm-steam-id', steamId);
+          return steamId;
+        }
+      }
+    }
+
+    // Method 3: Try to get the account ID from data-miniprofile attribute inside the miniprofile
+    const miniprofileLink = miniprofileElement.querySelector('[data-miniprofile]');
+    if (miniprofileLink) {
+      const accountId = miniprofileLink.getAttribute('data-miniprofile');
+      if (accountId && accountId.trim()) {
+        const steamId = accountIdToSteamId64(accountId);
+        if (steamId) {
+          miniprofileElement.setAttribute('data-sfm-steam-id', steamId);
+          return steamId;
+        }
+      }
+    }
+
+    // Method 4: Try to find steamid from profile links in the miniprofile
+    const profileLinks = miniprofileElement.querySelectorAll('a[href*="/profiles/"], a[href*="/id/"]');
+    
+    for (const link of profileLinks) {
+      const steamId = parseSteamId(link.href);
+      if (steamId) {
+        miniprofileElement.setAttribute('data-sfm-steam-id', steamId);
+        return steamId;
+      }
+    }
+    
+    return null;
+  }
+
+  function enhanceMiniprofileDebounced(miniprofileElement) {
+    // Clear any pending enhancement
+    if (miniprofileEnhanceTimeout) {
+      clearTimeout(miniprofileEnhanceTimeout);
+    }
+
+    // Snapshot the hover target for this enhancement cycle
+    const hoveredAccountId = currentlyHoveredFriendRow?.getAttribute('data-miniprofile') || lastHoveredAccountId;
+    if (hoveredAccountId) {
+      miniprofileElement.setAttribute('data-sfm-target-account-id', hoveredAccountId);
+    } else {
+      miniprofileElement.removeAttribute('data-sfm-target-account-id');
+    }
+
+    // Immediately clear previous injected content so stale data doesn't flash
+    const existingSection = miniprofileElement.querySelector('.sfm-miniprofile-section');
+    if (existingSection) {
+      existingSection.remove();
+    }
+
+    // Slight delay to let Steam finish swapping miniprofile content before injecting ours
+    miniprofileEnhanceTimeout = setTimeout(() => {
+      enhanceMiniprofile(miniprofileElement);
+    }, 120);
+  }
+
+  function enhanceMiniprofile(miniprofileElement) {
+    // Extract steamid from the miniprofile content
+    const steamId = extractSteamIdFromMiniprofile(miniprofileElement);
+    if (!steamId) {
       return;
     }
 
-    row.setAttribute("data-sfm-tooltip-bound", "true");
+    const metadata = friendMetadataCache.get(steamId);
+    if (!metadata) {
+      return;
+    }
 
-    row.addEventListener("mouseenter", (event) => {
-      const tooltip = ensureTooltip();
-      const note = row.getAttribute("data-sfm-note") || "";
-      const friendSince = row.getAttribute("data-sfm-friend-since") || "";
-      const yearsOfService = row.getAttribute("data-sfm-years-service") || "";
-      const steamLevel = row.getAttribute("data-sfm-steam-level") || "";
+    const { note, tagsText, friendSince } = metadata;
 
-      const parts = [];
-      if (note && note !== "No note") parts.push(`📝 ${note}`);
-      if (friendSince) parts.push(friendSince);
-      if (yearsOfService) parts.push(yearsOfService);
-      if (steamLevel) parts.push(steamLevel);
+    const existingSection = miniprofileElement.querySelector('.sfm-miniprofile-section');
 
-      if (parts.length === 0) {
-        return;
+    // Show if we have ANY content to display
+    if (!note && !tagsText && !friendSince) {
+      if (existingSection) {
+        existingSection.remove();
       }
+      // Clear tracking attributes since we have no content
+      miniprofileElement.removeAttribute('data-sfm-last-id');
+      miniprofileElement.removeAttribute('data-sfm-steam-id');
+      return;
+    }
 
-      tooltip.innerHTML = parts.join("<br>");
-      tooltip.classList.add("sfm-visible");
+    // Remove any existing content first
+    if (existingSection) {
+      existingSection.remove();
+    }
 
-      const x = event.clientX + 12;
-      const y = event.clientY + 12;
-      tooltip.style.left = `${x}px`;
-      tooltip.style.top = `${y}px`;
-    });
+    // Find the details section to inject our content
+    const detailsSection = miniprofileElement.querySelector(".miniprofile_detailssection");
+    if (!detailsSection) {
+      return;
+    }
 
-    row.addEventListener("mousemove", (event) => {
-      const tooltip = ensureTooltip();
-      tooltip.style.left = `${event.clientX + 12}px`;
-      tooltip.style.top = `${event.clientY + 12}px`;
-    });
+    // Create our custom container with inline styles
+    const sfmContainer = document.createElement("div");
+    sfmContainer.className = "sfm-miniprofile-section";
+    sfmContainer.style.cssText = "border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px; margin-top: 8px; display: block;";
 
-    row.addEventListener("mouseleave", () => {
-      const tooltip = ensureTooltip();
-      tooltip.classList.remove("sfm-visible");
-    });
+    // Add friendship duration first (if available)
+    if (friendSince) {
+      const friendSinceDiv = document.createElement("div");
+      friendSinceDiv.className = "sfm-miniprofile-item miniprofile_featuredcontainer";
+      friendSinceDiv.style.cssText = "display: flex; align-items: center; gap: 8px; padding: 2px 0; margin-bottom: 6px; font-size: 12px; line-height: 1.4; color: #c7d5e0;";
+      const friendSinceIcon = document.createElement("span");
+      friendSinceIcon.className = "sfm-miniprofile-icon";
+      friendSinceIcon.textContent = "🕐";
+      friendSinceIcon.style.cssText = "flex-shrink: 0; font-size: 13px;";
+      const friendSinceText = document.createElement("span");
+      friendSinceText.className = "sfm-miniprofile-text";
+      friendSinceText.textContent = friendSince;
+      friendSinceText.style.cssText = "flex: 1; overflow-wrap: anywhere;";
+      friendSinceDiv.appendChild(friendSinceIcon);
+      friendSinceDiv.appendChild(friendSinceText);
+      sfmContainer.appendChild(friendSinceDiv);
+    }
+
+    // Add note
+    if (note) {
+      const noteDiv = document.createElement("div");
+      noteDiv.className = "sfm-miniprofile-item miniprofile_featuredcontainer";
+      noteDiv.style.cssText = "display: flex; align-items: center; gap: 8px; padding: 2px 0; margin-bottom: 6px; font-size: 12px; line-height: 1.4; color: #c7d5e0;";
+      const noteIcon = document.createElement("span");
+      noteIcon.className = "sfm-miniprofile-icon";
+      noteIcon.textContent = "📝";
+      noteIcon.style.cssText = "flex-shrink: 0; font-size: 13px;";
+      const noteText = document.createElement("span");
+      noteText.className = "sfm-miniprofile-text";
+      noteText.textContent = note;
+      noteText.style.cssText = "flex: 1; overflow-wrap: anywhere;";
+      noteDiv.appendChild(noteIcon);
+      noteDiv.appendChild(noteText);
+      sfmContainer.appendChild(noteDiv);
+    }
+
+    // Add tags
+    if (tagsText) {
+      const tagsDiv = document.createElement("div");
+      tagsDiv.className = "sfm-miniprofile-item miniprofile_featuredcontainer";
+      tagsDiv.style.cssText = "display: flex; align-items: center; gap: 8px; padding: 2px 0; margin-bottom: 0; font-size: 12px; line-height: 1.4; color: #c7d5e0;";
+      const tagsIcon = document.createElement("span");
+      tagsIcon.className = "sfm-miniprofile-icon";
+      tagsIcon.textContent = "🏷️";
+      tagsIcon.style.cssText = "flex-shrink: 0; font-size: 13px;";
+      const tagsTextSpan = document.createElement("span");
+      tagsTextSpan.className = "sfm-miniprofile-text";
+      tagsTextSpan.textContent = tagsText;
+      tagsTextSpan.style.cssText = "flex: 1; overflow-wrap: anywhere;";
+      tagsDiv.appendChild(tagsIcon);
+      tagsDiv.appendChild(tagsTextSpan);
+      sfmContainer.appendChild(tagsDiv);
+    }
+
+    // Insert at the bottom of details section
+    detailsSection.appendChild(sfmContainer);
+    
+    // Remember which friend we're showing to prevent duplicate enhancements
+    miniprofileElement.setAttribute('data-sfm-last-id', steamId);
   }
 
   function buildCounts(state, entries) {
-    const countsByGroupId = new Map();
+    const countsByGroupId = {};
     for (const entry of entries) {
       const groupId = state.friendsMeta[entry.steamId]?.groupId;
       if (!groupId) {
         continue;
       }
-      countsByGroupId.set(groupId, (countsByGroupId.get(groupId) || 0) + 1);
+      countsByGroupId[groupId] = (countsByGroupId[groupId] || 0) + 1;
     }
     return countsByGroupId;
   }
@@ -505,48 +668,109 @@
     });
   }
 
-  function injectCreateGroupButton() {
-    if (document.getElementById("sfm-create-group-btn")) {
+
+
+  function injectSidebarManagementSection() {
+    // Check if already injected
+    if (document.getElementById("sfm-sidebar-section")) {
       return;
     }
 
-    // Find the Add a Friend button using the exact ID
-    const addFriendBtn = document.getElementById("add_friends_button");
+    // Find the Groups section in the sidebar
+    const friendsNav = document.querySelector('.friends_nav');
+    if (!friendsNav) {
+      return;
+    }
+
+    // Find the last item in Groups section (Create Group... link)
+    const createGroupLink = Array.from(friendsNav.querySelectorAll('a')).find(
+      a => a.textContent.trim() === 'Create Group...'
+    );
     
-    if (addFriendBtn) {
-      const createGroupBtn = document.createElement("button");
-      createGroupBtn.id = "sfm-create-group-btn";
-      createGroupBtn.className = "profile_friends manage_link btn_green_steamui btn_medium";
-      createGroupBtn.style.marginLeft = "8px";
-      createGroupBtn.innerHTML = '<span><svg class="sfm-folder-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 3.5C1 2.67157 1.67157 2 2.5 2H6L7.5 4H13.5C14.3284 4 15 4.67157 15 5.5V12.5C15 13.3284 14.3284 14 13.5 14H2.5C1.67157 14 1 13.3284 1 12.5V3.5Z" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="11" y1="7" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="9" x2="13" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Create Group</span>';
-      createGroupBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        addGroupFlow();
-      });
-      
-      addFriendBtn.insertAdjacentElement('afterend', createGroupBtn);
+    if (!createGroupLink) {
       return;
     }
 
-    // Fallback: inject as a floating button
-    const friendsList = document.querySelector('#search_results, .profile_friends');
-    if (friendsList && !document.getElementById("sfm-create-group-btn")) {
-      const createGroupBtn = document.createElement("button");
-      createGroupBtn.id = "sfm-create-group-btn";
-      createGroupBtn.type = "button";
-      createGroupBtn.className = "sfm-create-group-floating-btn";
-      createGroupBtn.textContent = "📁  Create Group";
-      createGroupBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        addGroupFlow();
+    // Create Friends Manager section
+    const managerSection = document.createElement('div');
+    managerSection.id = 'sfm-sidebar-section';
+
+    const sectionHeader = document.createElement('h4');
+    sectionHeader.textContent = 'Friends Manager';
+    managerSection.appendChild(sectionHeader);
+
+    // Manage Groups link with overlapping profiles icon
+    const manageGroupsLink = document.createElement('a');
+    manageGroupsLink.className = 'sfm-sidebar-link';
+    manageGroupsLink.href = '#';
+    manageGroupsLink.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="margin-right: 8px; vertical-align: middle;"><path d="M6 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H1zM11 3.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 1-.5-.5zm.5 2.5a.5.5 0 0 0 0 1h4a.5.5 0 0 0 0-1h-4zm2 3a.5.5 0 0 0 0 1h2a.5.5 0 0 0 0-1h-2zm0 3a.5.5 0 0 0 0 1h2a.5.5 0 0 0 0-1h-2z" opacity="0.4"/><path d="M11 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm5 6s1 0 1-1-1-4-6-4-6 3-6 4 1 1 1 1h10z"/></svg><span class="title">Manage Groups</span>';
+    manageGroupsLink.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const state = await getState();
+      const entries = findFriendEntries();
+      const friendCounts = buildCounts(state, entries);
+      showManageGroupsModal({
+        groups: [...state.groups],
+        friendCounts,
+        onUpdateGroup: async (groupId, updates) => {
+          const result = await updateGroup(groupId, updates);
+          if (result) queueApply();
+          return result;
+        },
+        onDeleteGroup: async (groupId) => {
+          const result = await deleteGroup(groupId);
+          if (result) queueApply();
+          return result;
+        },
+        onReorderGroups: async (orderedIds) => {
+          const result = await reorderGroups(orderedIds);
+          if (result) queueApply();
+          return result;
+        },
+        onCreateGroup: async (name) => {
+          const result = await addGroup(name);
+          if (result) queueApply();
+          return result;
+        },
+        onClose: () => queueApply()
       });
-      
-      document.body.appendChild(createGroupBtn);
-    } else {
-      // Could not find target for button injection
-    }
+    });
+    managerSection.appendChild(manageGroupsLink);
+
+    // Manage Tags link with tag icon
+    const manageTagsLink = document.createElement('a');
+    manageTagsLink.className = 'sfm-sidebar-link';
+    manageTagsLink.href = '#';
+    manageTagsLink.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="margin-right: 8px; vertical-align: middle;"><path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l7 7a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0l-7-7A1 1 0 0 1 2 6.586V2zm3.5 4a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/><path d="M1.293 7.793A1 1 0 0 1 1 7.086V2a1 1 0 0 0-1 1v4.586a1 1 0 0 0 .293.707l7 7a1 1 0 0 0 1.414 0l.043-.043-7.457-7.457z"/></svg><span class="title">Manage Tags</span>';
+    manageTagsLink.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const state = await getState();
+      showManageTagsModal({
+        tags: [...(state.tags || [])],
+        onUpdateTag: async (tagId, updates) => {
+          const result = await updateTag(tagId, updates);
+          if (result) queueApply();
+          return result;
+        },
+        onDeleteTag: async (tagId) => {
+          const result = await deleteTag(tagId);
+          if (result) queueApply();
+          return result;
+        },
+        onCreateTag: async (name, color) => {
+          const result = await addTag(name, color);
+          if (result) queueApply();
+          return result;
+        },
+        onClose: () => queueApply()
+      });
+    });
+    managerSection.appendChild(manageTagsLink);
+
+    // Insert after Create Group link
+    createGroupLink.insertAdjacentElement('afterend', managerSection);
   }
 
   async function injectControls(state, entries) {
@@ -554,26 +778,109 @@
       const { row, steamId } = entry;
       const currentMeta = state.friendsMeta[steamId] || { note: "", groupId: null };
 
-      const existingControls = row.querySelector(`.sfm-inline-controls[data-sfm-controls="${steamId}"]`);
+      if (row.sfmManageModeObserver) {
+        row.sfmManageModeObserver.disconnect();
+        row.sfmManageModeObserver = null;
+      }
+
+      const existingControls = row.querySelector(`.sfm-friend-controls[data-sfm-controls="${steamId}"], .sfm-inline-controls[data-sfm-controls="${steamId}"]`);
       if (row.getAttribute("data-sfm-injected") === "true" && existingControls) {
         existingControls.remove();
       } else {
-        const anyControls = row.querySelectorAll(".sfm-inline-controls");
+        const anyControls = row.querySelectorAll(".sfm-friend-controls, .sfm-inline-controls");
         for (const controls of anyControls) {
           controls.remove();
         }
       }
 
       row.setAttribute("data-sfm-note", currentMeta.note || "No note");
-      row.setAttribute("data-sfm-friend-since", extractFriendSince(row));
+      
+      // Show friendship duration if available from API, otherwise show text from DOM
+      let friendSinceText = extractFriendSince(row);
+      if (currentMeta.friendSince && Number.isFinite(currentMeta.friendSince)) {
+        const duration = calculateFriendshipDuration(currentMeta.friendSince);
+        const date = formatFriendshipDate(currentMeta.friendSince);
+        friendSinceText = duration ? `Friend since ${date} (${duration})` : `Friend since ${date}`;
+      }
+      row.setAttribute("data-sfm-friend-since", friendSinceText);
+      
       row.setAttribute("data-sfm-years-service", extractYearsOfService(row));
       row.setAttribute("data-sfm-steam-level", extractSteamLevel(row));
-      bindRowTooltip(row);
+
+      const selectedTagIds = Array.isArray(currentMeta.tags) ? currentMeta.tags : [];
+      const selectedTags = (state.tags || []).filter((tag) => selectedTagIds.includes(tag.id));
+      row.setAttribute(
+        "data-sfm-tags",
+        selectedTags.length ? selectedTags.map((tag) => tag.name).join(", ") : ""
+      );
+
+      const existingTagContainer = row.querySelector(".sfm-row-tags");
+      if (existingTagContainer) {
+        existingTagContainer.remove();
+      }
+
+      // Store tags for later insertion into controls
+      row.sfmSelectedTags = selectedTags;
+
+      function darkenColor(hexColor, factor) {
+        const r = parseInt(hexColor.substr(1, 2), 16);
+        const g = parseInt(hexColor.substr(3, 2), 16);
+        const b = parseInt(hexColor.substr(5, 2), 16);
+        
+        const newR = Math.max(0, Math.floor(r * (1 - factor)));
+        const newG = Math.max(0, Math.floor(g * (1 - factor)));
+        const newB = Math.max(0, Math.floor(b * (1 - factor)));
+        
+        return "#" + [newR, newG, newB].map(x => x.toString(16).padStart(2, "0")).join("");
+      }
+
+      function lightenColor(hexColor, factor) {
+        const r = parseInt(hexColor.substr(1, 2), 16);
+        const g = parseInt(hexColor.substr(3, 2), 16);
+        const b = parseInt(hexColor.substr(5, 2), 16);
+
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+
+        const newMax = Math.min(255, max);
+        const newMin = Math.min(255, Math.round(min + (255 - min) * (factor * 0.35)));
+
+        let newR, newG, newB;
+        if (r === max) {
+          newR = newMax;
+          newG = g === min ? newMin : Math.min(255, Math.round(g + (g - min) * (factor * 0.3)));
+          newB = b === min ? newMin : Math.min(255, Math.round(b + (b - min) * (factor * 0.3)));
+        } else if (g === max) {
+          newG = newMax;
+          newR = r === min ? newMin : Math.min(255, Math.round(r + (r - min) * (factor * 0.3)));
+          newB = b === min ? newMin : Math.min(255, Math.round(b + (b - min) * (factor * 0.3)));
+        } else {
+          newB = newMax;
+          newR = r === min ? newMin : Math.min(255, Math.round(r + (r - min) * (factor * 0.3)));
+          newG = g === min ? newMin : Math.min(255, Math.round(g + (g - min) * (factor * 0.3)));
+        }
+
+        return "#" + [newR, newG, newB].map(x => x.toString(16).padStart(2, "0")).join("");
+      }
+
+      updateFriendMetadataCache(row);
+
+      // Extract profile URL
+      let profileUrl = null;
+      const profileAnchors = row.querySelectorAll('a[href*="/profiles/"]');
+      for (const anchor of profileAnchors) {
+        const href = anchor?.href;
+        if (href && href.includes("/profiles/")) {
+          profileUrl = href;
+          break;
+        }
+      }
 
       const controls = createFriendControls({
         steamId,
         currentMeta,
         groups: state.groups,
+        tags: state.tags || [],
         onEditNote: async (note) => {
           await updateFriend(steamId, { note });
           row.setAttribute("data-sfm-note", note || "No note");
@@ -585,11 +892,149 @@
         onGroupChange: async (groupId) => {
           await updateFriend(steamId, { groupId });
           queueApply();
-        }
+        },
+        onTagsChange: async (tagIds) => {
+          await updateFriend(steamId, { tags: tagIds });
+          const tooltip = document.getElementById("sfm-hover-tooltip");
+          if (tooltip && tooltip.classList.contains("sfm-visible")) {
+            tooltip.classList.remove("sfm-visible");
+          }
+        },
+        onCreateTag: async (tagName, color) => {
+          const state = await getState();
+          const normalizedName = String(tagName || "").trim().toLowerCase();
+          const exists = (state.tags || []).some(
+            (tag) => String(tag.name || "").trim().toLowerCase() === normalizedName
+          );
+
+          if (!normalizedName || exists) {
+            return false;
+          }
+
+          const createdTag = await addTag(tagName, color);
+          if (createdTag) {
+            queueApply();
+            return true;
+          }
+
+          return false;
+        },
+        onUnfriend: async () => {
+          try {
+            // Get access token and unfriend via Steam API
+            const accessToken = await getAccessToken();
+            if (!accessToken) {
+              alert("Could not authenticate with Steam API. Please make sure you're logged into Steam Community.");
+              return;
+            }
+
+            const success = await removeFriend(steamId, accessToken);
+
+            if (success) {
+              // Remove from extension state
+              const state = await getState();
+              delete state.friendsMeta[steamId];
+              await saveState(state);
+              // Trigger re-apply to remove from UI
+              row.remove();
+              queueApply();
+            } else {
+              alert("Failed to unfriend. Please try again.");
+            }
+          } catch (error) {
+            console.error("Error unfriending:", error);
+            alert("Error unfriending. Please try again.");
+          }
+        },
+        profileUrl
       });
 
       row.classList.add("sfm-row-host");
       row.appendChild(controls);
+
+      const isElementVisible = (element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") return false;
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const syncControlsVisibility = () => {
+        const selectionContainer = row.querySelector(
+          ".indicator_select_friend, .friend_block_v2_select, .manage_friend_checkbox"
+        );
+        const hasBulkSelectionControl = isElementVisible(selectionContainer);
+        controls.style.display = hasBulkSelectionControl ? "none" : "flex";
+      };
+
+      syncControlsVisibility();
+
+      const manageModeObserver = new MutationObserver(() => {
+        syncControlsVisibility();
+      });
+      manageModeObserver.observe(row, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class", "style"]
+      });
+      row.sfmManageModeObserver = manageModeObserver;
+      
+      // Create and insert tags into controls (right side, before button)
+      if (selectedTags.length > 0) {
+        const tagContainer = document.createElement("div");
+        tagContainer.className = "sfm-row-tags";
+        tagContainer.title = selectedTags.map(t => t.name).join(", ");
+
+        // Show only first 2 tags
+        const visibleTags = selectedTags.slice(0, 2);
+        const hiddenCount = Math.max(0, selectedTags.length - 2);
+
+        for (const tag of visibleTags) {
+          const chip = document.createElement("span");
+          chip.className = "sfm-tag-label sfm-row-tag";
+          chip.textContent = tag.name;
+
+          // Generate darker and lighter shades from the base color
+          const baseColor = tag.color;
+          const darkerShade = darkenColor(baseColor, 0.65);
+          const lighterShade = lightenColor(baseColor, 0.65);
+
+          chip.style.backgroundColor = darkerShade;
+          chip.style.color = lighterShade;
+          chip.style.borderColor = lighterShade;
+
+          tagContainer.appendChild(chip);
+        }
+
+        // Add +X indicator if there are more tags
+        if (hiddenCount > 0) {
+          const moreIndicator = document.createElement("span");
+          moreIndicator.className = "sfm-tag-label sfm-row-tag sfm-tag-more";
+          moreIndicator.textContent = `+${hiddenCount}`;
+          moreIndicator.style.backgroundColor = "#1b2838";
+          moreIndicator.style.color = "#c7d5e0";
+          moreIndicator.style.borderColor = "#c7d5e0";
+          tagContainer.appendChild(moreIndicator);
+        }
+
+        // Insert tags into controls, before the button
+        controls.insertBefore(tagContainer, controls.firstChild);
+      }
+
+      // Add hover listeners to track which friend row is currently being hovered (for miniprofile extraction)
+      row.addEventListener('mouseenter', () => {
+        currentlyHoveredFriendRow = row;
+        lastHoveredAccountId = row.getAttribute('data-miniprofile') || null;
+      });
+      
+      row.addEventListener('mouseleave', () => {
+        if (currentlyHoveredFriendRow === row) {
+          currentlyHoveredFriendRow = null;
+        }
+      });
+      
       row.setAttribute("data-sfm-injected", "true");
     }
   }
@@ -616,13 +1061,24 @@
       return;
     }
 
+    // Check if extension context is still valid
+    try {
+      if (!chrome.runtime?.id) {
+        console.warn('[SFM] Extension context invalidated. Please reload the page.');
+        return;
+      }
+    } catch (e) {
+      console.warn('[SFM] Extension context invalidated. Please reload the page.');
+      return;
+    }
+
     applyInProgress = true;
     try {
       observer.disconnect();
       const state = await getState();
       const entries = findFriendEntries();
       await injectControls(state, entries);
-      injectCreateGroupButton();
+      injectSidebarManagementSection();
       sortFriendRows(state, entries);
     } catch (error) {
       console.error("SFM apply error", error);
@@ -656,7 +1112,7 @@
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          if (!node.closest(".sfm-inline-controls, #sfm-hover-tooltip, .sfm-group-header, #sfm-create-group-btn")) {
+          if (!node.closest(".sfm-friend-controls, .sfm-inline-controls, .sfm-group-header, #sfm-sidebar-section, .sfm-sidebar-link, .sfm-modal-overlay, .sfm-miniprofile-section")) {
             shouldApply = true;
             break;
           }
@@ -664,7 +1120,7 @@
       }
       for (const node of mutation.removedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          if (!node.closest(".sfm-inline-controls, #sfm-hover-tooltip, .sfm-group-header, #sfm-create-group-btn")) {
+          if (!node.closest(".sfm-friend-controls, .sfm-inline-controls, .sfm-group-header, #sfm-sidebar-section, .sfm-sidebar-link, .sfm-modal-overlay, .sfm-miniprofile-section")) {
             shouldApply = true;
             break;
           }
@@ -682,6 +1138,71 @@
     subtree: true
   });
 
+  // Observer for miniprofile popups
+  const miniprofileObserver = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      // Handle added nodes
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          // Check if this is a miniprofile that just appeared
+          if (node.classList && node.classList.contains("miniprofile_hover")) {
+            enhanceMiniprofileDebounced(node);
+          }
+          // Also check children in case the miniprofile was added as part of a larger structure
+          const miniprofiles = node.querySelectorAll && node.querySelectorAll(".miniprofile_hover");
+          if (miniprofiles && miniprofiles.length > 0) {
+            miniprofiles.forEach(mp => enhanceMiniprofileDebounced(mp));
+          }
+        }
+      }
+      
+      // Handle attribute changes (for style visibility changes)
+      if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+        const target = mutation.target;
+        if (target.classList && target.classList.contains("miniprofile_hover")) {
+          const style = target.getAttribute('style') || '';
+          if (style.includes('display: block') || style.includes('opacity: 1')) {
+            // Miniprofile became visible - debounce to wait for content load
+            enhanceMiniprofileDebounced(target);
+          }
+        }
+      }
+      
+      // Handle child list changes inside miniprofile (content loading)
+      if (mutation.type === 'childList') {
+        const target = mutation.target;
+        if (target.closest && target.closest('.miniprofile_hover')) {
+          const miniprofile = target.closest('.miniprofile_hover');
+          // Skip if the mutation was caused by us adding our section
+          let causedBySfmInjection = false;
+          if (mutation.addedNodes.length > 0) {
+            for (const node of mutation.addedNodes) {
+              if (node.classList && node.classList.contains('sfm-miniprofile-section')) {
+                causedBySfmInjection = true;
+                break;
+              }
+            }
+          }
+          if (causedBySfmInjection) {
+            continue;
+          }
+          const style = miniprofile.getAttribute('style') || '';
+          if (style.includes('display: block')) {
+            // Content changed in visible miniprofile
+            enhanceMiniprofileDebounced(miniprofile);
+          }
+        }
+      }
+    }
+  });
+
+  miniprofileObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style']
+  });
+
   // Safety cleanup: hide drop zones on any mouseup
   document.addEventListener("mouseup", () => {
     if (activeDropZones.length > 0) {
@@ -689,5 +1210,10 @@
     }
   });
 
-  queueApply();
+  // Sync friendship dates from Steam API on page load (with cache)
+  syncFriendshipDates().catch((error) => {
+    console.debug("Friendship dates sync failed (non-fatal):", error);
+  }).then(() => {
+    queueApply();
+  });
 })();
